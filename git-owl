@@ -1,0 +1,311 @@
+#!/usr/bin/env luajit
+-- -*- mode:Lua -*-
+
+local io = require("io")
+local os = require("os")
+
+local string = require("string")
+local table = require("table")
+
+local assert = assert
+local print = print
+local setmetatable = setmetatable
+
+local arg = arg
+
+----------
+
+local function errorf(fmt, ...)
+    local str = string.format(fmt, ...)
+    io.stderr:write(str, "\n")
+    os.exit(1)
+end
+
+-- Execute a git subcommand. Quits us on failure, returns its output on
+-- success.
+-- <quit_if_empty>: if command output is empty, quit us.
+local function git(cmd_and_args, quit_if_empty)
+    local f, errmsg = io.popen("git "..cmd_and_args)
+    if (f == nil) then
+        errorf("error executing '%s': ", errmsg)
+    end
+
+    local output = f:read("*a")
+    f:close()
+
+    if (output:sub(-1) == "\n") then
+        output = output:sub(1,-2)  -- strip potential trailing newline
+    end
+
+    if (quit_if_empty and output=="") then
+        os.exit(2)
+    end
+    return output
+end
+
+-- Enclose elements of tab[begi]..tab[endi] in quotes and concatenated them,
+-- splitting with a space.  XXX: not very robust.
+local function quote_filenames(tab, begi, endi)
+    return "'"..table.concat(tab, "' '", begi, endi).."'"
+end
+
+
+--- GitIgnoreFile ---
+local GitIgnoreFile_mt = {
+    __index = {
+        -- Write this .gitignore, using file names from FileNameSet <set>
+        write = function(self, set)
+            local f, errmsg = io.open(self.filename, "w+")
+            if (f == nil) then
+                errorf("Couldn't open '%s' for writing: %s", self.filename, errmsg)
+            end
+
+            local ok, errmsg = f:write(table.concat(self.lines, "\n"), "\n")
+            if (not ok) then
+                errorf("Failed writing to '%s': %s", self.filename, errmsg)
+            end
+
+            ok = ok and f:write("# git-owl BEGIN: DO NOT EDIT!\n")
+            for i=1,#set.fns do
+                ok = ok and f:write(set.fns[i], "\n")
+            end
+            ok = ok and f:write("# git-owl END\n")
+
+            if (not ok) then
+                errorf("Failed writing to '%s'", self.filename)
+            end
+        end,
+    },
+}
+
+local function GitIgnoreFile(filename)
+    local gif = {
+        filename = filename,
+        lines = {},
+    }
+
+    local f = io.open(filename)
+    if (f ~= nil) then
+        local getlines = true
+
+        for line in f:lines() do
+            if (line:find("^# git%-owl BEGIN")) then
+                getlines = false
+            end
+
+            if (getlines) then
+                gif.lines[#gif.lines+1] = line
+            end
+
+            if (line:find("^# git%-owl END")) then
+                getlines = true
+            end
+        end
+
+        f:close()
+    end
+
+    return setmetatable(gif, GitIgnoreFile_mt)
+end
+
+--- File name set ---
+local function maybe_insert(set, fn, sha)
+    if (set.has[fn] == nil) then
+        set.has[fn] = true
+        set.fns[#set.fns+1] = fn
+        if (sha ~= nil) then
+            set.tosha[fn] = sha
+--            set.tofn[sha] = fn
+        end
+    end
+end
+
+local FileNameSet_mt = {
+    __index = {
+        sort = function(self)
+            table.sort(self.fns)
+        end,
+
+        getshas = function(self, rootdir, forceupdate, no_quit_if_empty)
+            local fns = self.fns
+            for i=1,#fns do
+                local fn = rootdir.."/"..fns[i]
+                if (forceupdate or self.tosha[fn]==nil) then
+                    local sha = git("hash-object --no-filters -- '"..fn.."'", not no_quit_if_empty)
+                    if (sha == "") then
+                        sha = nil
+                    else
+                        assert(#sha == 40)  -- 40 chars SHA1
+                    end
+                    self.tosha[fns[i]] = sha
+                end
+            end
+        end,
+
+        mergeWith = function(self, other)
+            for i=1,#other.fns do
+                local fn = other.fns[i]
+                maybe_insert(self, fn, other.tosha[fn])
+            end
+            self:sort()
+            return self
+        end,
+
+        write = function(self, filename)
+            local f, errmsg = io.open(filename, "w+")
+            if (f == nil) then
+                errorf("Couldn't open '%s' for writing: %s", filename, errmsg)
+            end
+
+            for i=1,#self.fns do
+                local fn = self.fns[i]
+                assert(self.tosha[fn], "internal error")
+            end
+
+            for i=1,#self.fns do
+                local fn = self.fns[i]
+                f:write(self.tosha[fn], "  ", fn, "\n")
+            end
+
+            f:close()
+        end,
+    },
+}
+
+local function CAP(str)
+    return "("..str..")"
+end
+
+local SHAFILE_LINE_PATTERN = CAP(("[0-9a-f]"):rep(2*20)).." +"..CAP(".*")
+
+-- fnset = FileNameSet{<fromwhat>=...}
+--  strz=<fns_strz>: string of NUL-separated file names
+--  shafn=<filename of .git-owl-files (formatted like SHA1SUMS)>
+local function FileNameSet(opttab)
+    local set = {
+        fromfile = false,  -- file open successful?
+        fns = {},
+        has = {},
+        tosha = {},  -- will be [fn]=SHA1 eventually
+--        tofn = {},  -- will be [SHA1]=fn eventually
+    }
+
+    if (opttab==nil) then
+        -- nothing, stay empty
+    elseif (opttab.strz) then
+        for fn in opttab.strz:gmatch("[^%z]+") do
+            maybe_insert(set, fn)
+        end
+    elseif (opttab.shafn) then
+        local f = io.open(opttab.shafn)
+        if (f ~= nil) then
+            set.fromfile = true
+
+            local lnum = 0
+            for line in f:lines() do
+                lnum = lnum+1
+                local sha, fn = line:match(SHAFILE_LINE_PATTERN)
+                if (sha == nil) then
+                    errorf("error: unexpected line %d in '%s'", lnum, opttab.shafn)
+                end
+                maybe_insert(set, fn, sha)
+            end
+            f:close()
+        end
+    else
+        assert(false, "internal error")
+    end
+
+    return setmetatable(set, FileNameSet_mt)
+end
+
+
+--== Globals ==--
+
+-- The directory of the repository root:
+local g_rootdir
+-- The file holding the SHA1 sums:
+local g_dotfile
+
+
+--== Commands ==--
+
+local command = {}
+
+function command.add()
+    -- Get file names relative to repo root.
+    if (#arg < 2) then
+        -- git owl add [no args]: do nothing
+        return
+    end
+
+    local quoted_fns_tab = quote_filenames(arg, 2, #arg)
+    local rootrel_fns_strz = git("ls-files -z -o --full-name --error-unmatch -- "..quoted_fns_tab, true)
+
+    local fnset_existing = FileNameSet{shafn=g_dotfile}
+
+    local fnset_toadd = FileNameSet{strz=rootrel_fns_strz}
+    fnset_toadd:mergeWith(fnset_existing)
+    fnset_toadd:getshas(g_rootdir, false)
+
+    fnset_toadd:write(g_dotfile)
+
+    local ignorefile = GitIgnoreFile(g_rootdir.."/.gitignore")
+    ignorefile:write(fnset_toadd)
+end
+
+function command.check()
+    local fnset_listed = FileNameSet{shafn=g_dotfile}
+    if (not fnset_listed.fromfile) then
+        io.stdout:write("git-owl not initialized: see 'git owl help'\n")
+        os.exit(0)
+    end
+
+    local fnset_tocheck = FileNameSet():mergeWith(fnset_listed)
+    fnset_tocheck:getshas(g_rootdir, true, true)
+
+    local exitcode = 0
+
+    for i=1,#fnset_listed.fns do
+        local fn = fnset_listed.fns[i]
+        if (fnset_tocheck.tosha[fn] == nil) then
+            exitcode = 1
+            io.stdout:write(fn, ": MISSING\n")
+        elseif (fnset_listed.tosha[fn] ~= fnset_tocheck.tosha[fn]) then
+            exitcode = 1
+            io.stdout:write(fn, ": FAILED\n")
+        end
+    end
+
+    os.exit(exitcode)
+end
+
+function command.pull()
+    local otherrepo = arg[2]
+    if (otherrepo == nil) then
+        errorf("Usage: git owl pull /path/to/other/repo")
+    end
+
+    
+end
+
+function command.help()
+    print("Usage: git owl [add|check|help]")
+end
+
+
+--== Main ==--
+
+local cmd = arg[1]
+local cmdfunc = command[cmd]
+
+if (cmdfunc == nil) then
+    errorf("Unknown command '%s'", cmd)
+end
+
+if (cmd ~= "help") then
+    g_rootdir = git("rev-parse --show-toplevel", true)
+    g_dotfile = g_rootdir.."/.git-owl-files"
+end
+
+cmdfunc()
