@@ -252,6 +252,8 @@ function command.add()
 
     local ignorefile = GitIgnoreFile(g_rootdir.."/.gitignore")
     ignorefile:write(fnset_toadd)
+
+    git("add '"..g_rootdir.."/.gitignore' '"..g_dotfile.."'")
 end
 
 function command.check()
@@ -270,6 +272,7 @@ function command.check()
         local fn = fnset_listed.fns[i]
         if (fnset_tocheck.tosha[fn] == nil) then
             exitcode = 1
+            -- XXX: Will also show error message from git to stderr before.
             io.stdout:write(fn, ": MISSING\n")
         elseif (fnset_listed.tosha[fn] ~= fnset_tocheck.tosha[fn]) then
             exitcode = 1
@@ -280,17 +283,90 @@ function command.check()
     os.exit(exitcode)
 end
 
-function command.pull()
-    local otherrepo = arg[2]
-    if (otherrepo == nil) then
-        errorf("Usage: git owl pull /path/to/other/repo")
+local function getrelfn(absfn)
+    return git("ls-files -o '"..absfn.."'")
+end
+
+-- Get the absolute and relative file names of the i'th file in the FileNameSet
+-- <set>. If the file does not actually exist, the relative one will be "".
+-- The 3rd output arg: the file name relative to the repo root.
+local function getAbsRelNames(set, i)
+    local fn = set.fns[i]
+    local absfn = g_rootdir.."/"..fn
+    -- XXX: can give ugly error messages, e.g. when a *directory* component
+    -- does not exist:
+    return absfn, getrelfn(absfn), fn
+end
+
+function command.ls()
+    local fnset_listed = FileNameSet{shafn=g_dotfile}
+    local which = arg[2]  -- -a: all, -m: missing
+
+    if (which and which ~= "-a" and which ~= "-m") then
+        errorf("Usage: git owl ls [-a|-m]")
     end
 
-    
+    for i=1,#fnset_listed.fns do
+        local absfn, relfn = getAbsRelNames(fnset_listed, i)
+        if (relfn ~= "" and which~="-m") then
+            io.stdout:write(relfn, "\n")
+        elseif (relfn == "" and (which=="-m" or which=="-a")) then
+            io.stdout:write(absfn, "\n")
+        end
+    end
+end
+
+local function execute_or_quit(command)
+    local status = os.execute(command)
+    if (status ~= 0) then
+        errorf("ERROR: failed executing %q: exited with code %d", command, status)
+    end
+end
+
+function command.prepull()
+    -- Create dirs when necessary...
+    local fnset_listed = FileNameSet{shafn=g_dotfile}
+    for i=1,#fnset_listed.fns do
+        local absfn = g_rootdir.."/"..fnset_listed.fns[i]
+        local dir = absfn:match("(.*)/")
+        if (dir) then
+            execute_or_quit("mkdir -p '"..dir.."'")
+        end
+    end
+end
+
+-- Copy *nonexistent* files from other repo to us.
+function command.pull()
+    local otherrepo = arg[2]
+    if (otherrepo == nil or arg[2]:find("^%-")) then
+        otherrepo = git("config --get remote.origin.url", true):match("(.*)/")
+--        errorf("Usage: git owl pull /path/to/other/repo [--dry-run]")
+    end
+
+    local dryrun = (arg[3]=="--dry-run" or arg[2]=="--dry-run")
+    local exec = dryrun and print or execute_or_quit
+
+    local fnset_listed = FileNameSet{shafn=g_dotfile}
+    for i=1,#fnset_listed.fns do
+        local absfn, relfn, fn = getAbsRelNames(fnset_listed, i)
+        if (relfn == "") then
+            local dir = absfn:match("(.*)/")
+            if (dir and git("ls-files -o --directory '"..dir.."'")=="") then
+                -- directory doesn't exist, create it
+                exec("mkdir -p '"..dir.."'")
+            end
+
+            exec("cp -n '"..(otherrepo.."/"..fn).."' '"..(dir or ".").."'")
+
+            if (not dryrun) then
+                io.stdout:write(getrelfn(absfn), "\n")
+            end
+        end
+    end
 end
 
 function command.help()
-    print("Usage: git owl [add|check|help]")
+    io.stdout:write("Usage: git owl [add|check|prepull|pull|ls|help]\n")
 end
 
 
@@ -300,7 +376,7 @@ local cmd = arg[1]
 local cmdfunc = command[cmd]
 
 if (cmdfunc == nil) then
-    errorf("Unknown command '%s'", cmd)
+    errorf("git-owl: Unknown command '%s'", cmd)
 end
 
 if (cmd ~= "help") then
