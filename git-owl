@@ -49,6 +49,11 @@ local function quote_filenames(tab, begi, endi)
     return "'"..table.concat(tab, "' '", begi, endi).."'"
 end
 
+local function file_exists(absfn)
+    local f = io.open(absfn);
+    return (f~=nil) and f:close()
+end
+
 
 --- GitIgnoreFile ---
 local GitIgnoreFile_mt = {
@@ -131,7 +136,9 @@ local FileNameSet_mt = {
             for i=1,#fns do
                 local fn = rootdir.."/"..fns[i]
                 if (forceupdate or self.tosha[fn]==nil) then
-                    local sha = git("hash-object --no-filters -- '"..fn.."'", not no_quit_if_empty)
+                    local sha = file_exists(fn)
+                        and git("hash-object --no-filters -- '"..fn.."'", not no_quit_if_empty)
+                        or ""
                     if (sha == "") then
                         sha = nil
                     else
@@ -272,7 +279,6 @@ function command.check()
         local fn = fnset_listed.fns[i]
         if (fnset_tocheck.tosha[fn] == nil) then
             exitcode = 1
-            -- XXX: Will also show error message from git to stderr before.
             io.stdout:write(fn, ": MISSING\n")
         elseif (fnset_listed.tosha[fn] ~= fnset_tocheck.tosha[fn]) then
             exitcode = 1
@@ -284,7 +290,7 @@ function command.check()
 end
 
 local function getrelfn(absfn)
-    return git("ls-files -o '"..absfn.."'")
+    return file_exists(absfn) and git("ls-files -o '"..absfn.."'") or ""
 end
 
 -- Get the absolute and relative file names of the i'th file in the FileNameSet
@@ -293,8 +299,6 @@ end
 local function getAbsRelNames(set, i)
     local fn = set.fns[i]
     local absfn = g_rootdir.."/"..fn
-    -- XXX: can give ugly error messages, e.g. when a *directory* component
-    -- does not exist:
     return absfn, getrelfn(absfn), fn
 end
 
