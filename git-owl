@@ -1,6 +1,8 @@
 #!/usr/bin/env luajit
 -- -*- mode:Lua -*-
 
+local jit = require("jit")
+
 local io = require("io")
 local os = require("os")
 
@@ -10,6 +12,7 @@ local table = require("table")
 local assert = assert
 local print = print
 local setmetatable = setmetatable
+local type = type
 
 local arg = arg
 
@@ -43,10 +46,44 @@ local function git(cmd_and_args, quit_if_empty)
     return output
 end
 
+local function checkfn(fn)
+    assert(type(fn) == "string")
+    -- Don't allow: the two kinds of quote character, and also the backslash.
+    if (fn:find"['\"\\]") then
+        errorf("invalid file name `%s`: contains a quote char or backslash", fn)
+    end
+    return fn
+end
+
+-- The quoting character.
+-- XXX: in Windows, env vars may be expanded.
+--  Running in cmd.exe e.g. this:
+--   lua pargs.lua qwe "asd" 'zxc' "%HOME%"
+--  gives
+--[[
+pargs.lua
+qwe
+asd
+'zxc'
+c:/Users/<homedir>
+--]]
+--
+-- Where pargs.lua is:
+-- for i=0,#arg do print(arg[i]) end
+local qc = jit.os=="Windows" and '"' or "'"
+
+-- Surround a string with quotes.
+local function Q(str)
+    return qc..str..qc
+end
+
 -- Enclose elements of tab[begi]..tab[endi] in quotes and concatenated them,
 -- splitting with a space.  XXX: not very robust.
 local function quote_filenames(tab, begi, endi)
-    return "'"..table.concat(tab, "' '", begi, endi).."'"
+    for i=begi,endi do
+        checkfn(tab[i])
+    end
+    return Q(table.concat(tab, Q(" "), begi, endi))
 end
 
 local function file_exists(absfn)
@@ -58,7 +95,8 @@ end
 --- GitIgnoreFile ---
 local GitIgnoreFile_mt = {
     __index = {
-        -- Write this .gitignore, using file names from FileNameSet <set>
+        -- Write this .gitignore, using file names from FileNameSet <set>.
+        -- Close the file afterwards.
         write = function(self, set)
             local f, errmsg = io.open(self.filename, "w+")
             if (f == nil) then
@@ -79,6 +117,8 @@ local GitIgnoreFile_mt = {
             if (not ok) then
                 errorf("Failed writing to '%s'", self.filename)
             end
+
+            f:close()
         end,
     },
 }
@@ -117,7 +157,7 @@ end
 local function maybe_insert(set, fn, sha)
     if (set.has[fn] == nil) then
         set.has[fn] = true
-        set.fns[#set.fns+1] = fn
+        set.fns[#set.fns+1] = checkfn(fn)
         if (sha ~= nil) then
             set.tosha[fn] = sha
 --            set.tofn[sha] = fn
@@ -137,7 +177,7 @@ local FileNameSet_mt = {
                 local fn = rootdir.."/"..fns[i]
                 if (forceupdate or self.tosha[fn]==nil) then
                     local sha = file_exists(fn)
-                        and git("hash-object --no-filters -- '"..fn.."'", not no_quit_if_empty)
+                        and git("hash-object --no-filters -- "..Q(fn), not no_quit_if_empty)
                         or ""
                     if (sha == "") then
                         sha = nil
@@ -158,6 +198,7 @@ local FileNameSet_mt = {
             return self
         end,
 
+        -- Write out and FileNameSet SHA1s and close file.
         write = function(self, filename)
             local f, errmsg = io.open(filename, "w+")
             if (f == nil) then
@@ -260,7 +301,7 @@ function command.add()
     local ignorefile = GitIgnoreFile(g_rootdir.."/.gitignore")
     ignorefile:write(fnset_toadd)
 
-    git("add '"..g_rootdir.."/.gitignore' '"..g_dotfile.."'")
+    git("add "..Q(g_rootdir.."/.gitignore").." "..Q(g_dotfile))
 end
 
 function command.check()
@@ -290,7 +331,8 @@ function command.check()
 end
 
 local function getrelfn(absfn)
-    return file_exists(absfn) and git("ls-files -o '"..absfn.."'") or ""
+    checkfn(absfn)  -- NOTE: May be redundant, but can't harm
+    return file_exists(absfn) and git("ls-files -o "..Q(absfn)) or ""
 end
 
 -- Get the absolute and relative file names of the i'th file in the FileNameSet
@@ -334,7 +376,7 @@ function command.prepull()
         local absfn = g_rootdir.."/"..fnset_listed.fns[i]
         local dir = absfn:match("(.*)/")
         if (dir) then
-            execute_or_quit("mkdir -p '"..dir.."'")
+            execute_or_quit("mkdir -p "..Q(dir))
         end
     end
 end
@@ -347,6 +389,8 @@ function command.pull()
 --        errorf("Usage: git owl pull /path/to/other/repo [--dry-run]")
     end
 
+    checkfn(otherrepo)
+
     local dryrun = (arg[3]=="--dry-run" or arg[2]=="--dry-run")
     local exec = dryrun and print or execute_or_quit
 
@@ -355,12 +399,12 @@ function command.pull()
         local absfn, relfn, fn = getAbsRelNames(fnset_listed, i)
         if (relfn == "") then
             local dir = absfn:match("(.*)/")
-            if (dir and git("ls-files -o --directory '"..dir.."'")=="") then
+            if (dir and git("ls-files -o --directory "..Q(dir))=="") then
                 -- directory doesn't exist, create it
-                exec("mkdir -p '"..dir.."'")
+                exec("mkdir -p "..Q(dir))
             end
 
-            exec("cp -n '"..(otherrepo.."/"..fn).."' '"..(dir or ".").."'")
+            exec("cp -n "..Q(otherrepo.."/"..fn).." "..Q(dir or "."))
 
             if (not dryrun) then
                 io.stdout:write(getrelfn(absfn), "\n")
@@ -384,8 +428,8 @@ if (cmdfunc == nil) then
 end
 
 if (cmd ~= "help") then
-    g_rootdir = git("rev-parse --show-toplevel", true)
-    g_dotfile = g_rootdir.."/.git-owl-files"
+    g_rootdir = checkfn(git("rev-parse --show-toplevel", true))
+    g_dotfile = checkfn(g_rootdir.."/.git-owl-files")
 end
 
 cmdfunc()
