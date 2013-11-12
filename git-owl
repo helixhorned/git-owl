@@ -381,11 +381,24 @@ function command.prepull()
     end
 end
 
+-- Surround a file name with quotes, potentially fixing drive name,
+-- e.g. F:/... -> /F/...
+local function Qfixdrv(fn)
+    if (jit.os == "Windows") then
+        return Q(fn:gsub("^([A-Za-z]):", "/%1"))
+    else
+        return fn
+    end
+end
+
 -- Copy *nonexistent* files from other repo to us.
 function command.pull()
     local otherrepo = arg[2]
     if (otherrepo == nil or arg[2]:find("^%-")) then
-        otherrepo = git("config --get remote.origin.url", true):match("(.*)/")
+        -- NOTE: origin URL seems to be returned to us
+        --  with trailing slash on Linux
+        --  without trailing slash on Windows
+        otherrepo = git("config --get remote.origin.url", true):match("(.*)/?$")
 --        errorf("Usage: git owl pull /path/to/other/repo [--dry-run]")
     end
 
@@ -404,7 +417,7 @@ function command.pull()
                 exec("mkdir -p "..Q(dir))
             end
 
-            exec("cp -n "..Q(otherrepo.."/"..fn).." "..Q(dir or "."))
+            exec("cp "..Qfixdrv(otherrepo.."/"..fn).." "..Qfixdrv(dir or "."))
 
             if (not dryrun) then
                 io.stdout:write(getrelfn(absfn), "\n")
