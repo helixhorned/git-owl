@@ -398,7 +398,10 @@ function command.pull()
         -- NOTE: origin URL seems to be returned to us
         --  with trailing slash on Linux
         --  without trailing slash on Windows
-        otherrepo = git("config --get remote.origin.url", true):match("(.*)/?$")
+        otherrepo = git("config --get remote.origin.url"):match("(.*)/?$")
+        if (otherrepo == nil) then
+            errorf("git owl pull: when omitting <otherrepo>, need 'origin' remote")
+        end
 --        errorf("Usage: git owl pull /path/to/other/repo [--dry-run]")
     end
 
@@ -433,7 +436,7 @@ end
 
 --== Main ==--
 
-local cmd = arg[1]
+local cmd = arg[1] or "help"
 local cmdfunc = command[cmd]
 
 if (cmdfunc == nil) then
@@ -441,6 +444,8 @@ if (cmdfunc == nil) then
 end
 
 if (cmd ~= "help") then
+    -- NOTE: Requires Git >= 1.7, see
+    -- http://stackoverflow.com/questions/12293944/how-to-find-the-path-of-the-local-git-repository-when-i-am-possibly-in-a-subdire
     g_rootdir = checkfn(git("rev-parse --show-toplevel", true))
     g_dotfile = checkfn(g_rootdir.."/.git-owl-files")
 end
