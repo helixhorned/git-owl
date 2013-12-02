@@ -343,7 +343,10 @@ end
 function command.pull()
     local otherrepo = arg[2]
     if (otherrepo == nil or arg[2]:find("^%-")) then
-        otherrepo = git("config --get remote.origin.url", true):match("(.*)/")
+        otherrepo = git("config --get remote.origin.url"):match("(.*)/")
+        if (otherrepo == nil) then
+            errorf("git owl pull: when omitting <otherrepo>, need 'origin' remote")
+        end
 --        errorf("Usage: git owl pull /path/to/other/repo [--dry-run]")
     end
 
