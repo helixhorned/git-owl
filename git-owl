@@ -376,7 +376,7 @@ end
 
 --== Main ==--
 
-local cmd = arg[1]
+local cmd = arg[1] or "help"
 local cmdfunc = command[cmd]
 
 if (cmdfunc == nil) then
@@ -384,6 +384,8 @@ if (cmdfunc == nil) then
 end
 
 if (cmd ~= "help") then
+    -- NOTE: Requires Git >= 1.7, see
+    -- http://stackoverflow.com/questions/12293944/how-to-find-the-path-of-the-local-git-repository-when-i-am-possibly-in-a-subdire
     g_rootdir = git("rev-parse --show-toplevel", true)
     g_dotfile = g_rootdir.."/.git-owl-files"
 end
