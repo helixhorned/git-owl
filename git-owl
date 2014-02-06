@@ -399,7 +399,7 @@ function command.pull()
         --  with trailing slash on Linux
         --  without trailing slash on Windows
         otherrepo = git("config --get remote.origin.url"):match("(.*)/?$")
-        if (otherrepo == nil) then
+        if (otherrepo == nil or otherrepo == "") then
             errorf("git owl pull: when omitting <otherrepo>, need 'origin' remote")
         end
 --        errorf("Usage: git owl pull /path/to/other/repo [--dry-run]")
