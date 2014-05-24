@@ -30,7 +30,7 @@ end
 local function git(cmd_and_args, quit_if_empty)
     local f, errmsg = io.popen("git "..cmd_and_args)
     if (f == nil) then
-        errorf("error executing '%s': ", errmsg)
+        errorf("error executing `%s`: %s", cmd_and_args, errmsg)
     end
 
     local output = f:read("*a")
@@ -365,7 +365,19 @@ end
 local function execute_or_quit(command)
     local status = os.execute(command)
     if (status ~= 0) then
-        errorf("ERROR: failed executing %q: exited with code %d", command, status)
+        errorf("ERROR: failed executing `%s`: exited with code %d", command, status)
+    end
+end
+
+local function get_mkdir_cmd()
+    if (jit.os ~= "Windows") then
+        return "mkdir"
+    else
+        local bindir = git("config --global owl.bindir")
+        if (bindir == "") then
+            errorf("Failed getting `git config owl.bindir`. Please set it to the directory containing mkdir.exe")
+        end
+        return bindir.."\\mkdir.exe"
     end
 end
 
@@ -376,7 +388,7 @@ function command.prepull()
         local absfn = g_rootdir.."/"..fnset_listed.fns[i]
         local dir = absfn:match("(.*)/")
         if (dir) then
-            execute_or_quit("mkdir -p "..Q(dir))
+            execute_or_quit(get_mkdir_cmd().." -p "..Q(dir))
         end
     end
 end
@@ -417,7 +429,7 @@ function command.pull()
             local dir = absfn:match("(.*)/")
             if (dir and git("ls-files -o --directory "..Q(dir))=="") then
                 -- directory doesn't exist, create it
-                exec("mkdir -p "..Q(dir))
+                exec(get_mkdir_cmd().." -p "..Q(dir))
             end
 
             exec("cp "..Qfixdrv(otherrepo.."/"..fn).." "..Qfixdrv(dir or "."))
