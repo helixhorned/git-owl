@@ -252,6 +252,9 @@ local function FileNameSet(opttab)
             local lnum = 0
             for line in f:lines() do
                 lnum = lnum+1
+                if (line:sub(-1) == "\r") then  -- potentially strip \r (reading Windows files on *nix)
+                    line = line:sub(1,-2)
+                end
                 local sha, fn = line:match(SHAFILE_LINE_PATTERN)
                 if (sha == nil) then
                     errorf("error: unexpected line %d in '%s'", lnum, opttab.shafn)
