@@ -402,7 +402,7 @@ local function Qfixdrv(fn)
     if (jit.os == "Windows") then
         return Q(fn:gsub("^([A-Za-z]):", "/%1"))
     else
-        return fn
+        return Q(fn)
     end
 end
 
