@@ -175,7 +175,7 @@ local FileNameSet_mt = {
             local fns = self.fns
             for i=1,#fns do
                 local fn = rootdir.."/"..fns[i]
-                if (forceupdate or self.tosha[fn]==nil) then
+                if (forceupdate or self.tosha[fns[i]]==nil) then
                     local sha = file_exists(fn)
                         and git("hash-object --no-filters -- "..Q(fn), not no_quit_if_empty)
                         or ""
@@ -294,7 +294,6 @@ function command.add()
     local rootrel_fns_strz = git("ls-files -z -o --full-name --error-unmatch -- "..quoted_fns_tab, true)
 
     local fnset_existing = FileNameSet{shafn=g_dotfile}
-
     local fnset_toadd = FileNameSet{strz=rootrel_fns_strz}
     fnset_toadd:mergeWith(fnset_existing)
     fnset_toadd:getshas(g_rootdir, false)
