@@ -313,10 +313,26 @@ function command.check()
         os.exit(0)
     end
 
-    local fnset_tocheck = FileNameSet():mergeWith(fnset_listed)
-    fnset_tocheck:getshas(g_rootdir, true, true)
-
     local exitcode = 0
+
+    if (arg[2] == "-m") then
+        -- Only check for existence (a faster "git owl ls -m")
+
+        for i=1,#fnset_listed.fns do
+            local fn = fnset_listed.fns[i]
+            if (not file_exists(g_rootdir.."/"..fn)) then
+                io.stdout:write(fn)
+                exitcode = 1
+            end
+        end
+
+        os.exit(exitcode)
+    end
+
+    local fnset_tocheck = FileNameSet():mergeWith(fnset_listed)
+    if (not nosha) then
+        fnset_tocheck:getshas(g_rootdir, true, true)
+    end
 
     for i=1,#fnset_listed.fns do
         local fn = fnset_listed.fns[i]
