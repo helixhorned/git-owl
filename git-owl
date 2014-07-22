@@ -379,6 +379,9 @@ local function get_mkdir_cmd()
         if (bindir == "") then
             errorf("Failed getting `git config owl.bindir`. Please set it to the directory containing mkdir.exe")
         end
+        if (bindir:match("%s")) then
+            errorf("git config owl.bindir: must not contain whitespace")
+        end
         return bindir.."\\mkdir.exe"
     end
 end
