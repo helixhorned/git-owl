@@ -321,7 +321,7 @@ function command.check()
         for i=1,#fnset_listed.fns do
             local fn = fnset_listed.fns[i]
             if (not file_exists(g_rootdir.."/"..fn)) then
-                io.stdout:write(fn)
+                io.stdout:write(fn, "\n")
                 exitcode = 1
             end
         end
@@ -330,9 +330,7 @@ function command.check()
     end
 
     local fnset_tocheck = FileNameSet():mergeWith(fnset_listed)
-    if (not nosha) then
-        fnset_tocheck:getshas(g_rootdir, true, true)
-    end
+    fnset_tocheck:getshas(g_rootdir, true, true)
 
     for i=1,#fnset_listed.fns do
         local fn = fnset_listed.fns[i]
