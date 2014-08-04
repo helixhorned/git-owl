@@ -189,10 +189,12 @@ local FileNameSet_mt = {
             end
         end,
 
-        mergeWith = function(self, other)
+        mergeWith = function(self, other, pattern)
             for i=1,#other.fns do
                 local fn = other.fns[i]
-                maybe_insert(self, fn, other.tosha[fn])
+                if (pattern == nil or fn:find(pattern)) then
+                    maybe_insert(self, fn, other.tosha[fn])
+                end
             end
             self:sort()
             return self
@@ -307,6 +309,7 @@ function command.add()
 end
 
 function command.check()
+    -- git owl check [-m | <pattern>]
     local fnset_listed = FileNameSet{shafn=g_dotfile}
     if (not fnset_listed.fromfile) then
         io.stdout:write("git-owl not initialized: see 'git owl help'\n")
@@ -329,17 +332,20 @@ function command.check()
         os.exit(exitcode)
     end
 
-    local fnset_tocheck = FileNameSet():mergeWith(fnset_listed)
+    local pattern = arg[2]
+    local fnset_tocheck = FileNameSet():mergeWith(fnset_listed, pattern)
     fnset_tocheck:getshas(g_rootdir, true, true)
 
     for i=1,#fnset_listed.fns do
         local fn = fnset_listed.fns[i]
-        if (fnset_tocheck.tosha[fn] == nil) then
-            exitcode = 1
-            io.stdout:write(fn, ": MISSING\n")
-        elseif (fnset_listed.tosha[fn] ~= fnset_tocheck.tosha[fn]) then
-            exitcode = 1
-            io.stdout:write(fn, ": FAILED\n")
+        if (fnset_tocheck.has[fn]) then
+            if (fnset_tocheck.tosha[fn] == nil) then
+                exitcode = 1
+                io.stdout:write(fn, ": MISSING\n")
+            elseif (fnset_listed.tosha[fn] ~= fnset_tocheck.tosha[fn]) then
+                exitcode = 1
+                io.stdout:write(fn, ": FAILED\n")
+            end
         end
     end
 
