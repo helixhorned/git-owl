@@ -1,0 +1,5 @@
+git-owl: A featherweight large file tracker for git
+
+Usage: git owl [add|check|prepull|pull|ls|help]
+
+TODO: write documentation
